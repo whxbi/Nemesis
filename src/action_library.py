@@ -43,6 +43,7 @@ WORDLIST_SEARCH_DIRS = [
     os.path.expanduser("~/wordlists"),
     os.path.expanduser("~/.wordlists"),
 ]
+
 class RequestBudgetExceeded(Exception):
     """Raised when a run has hit its total request budget."""
     pass
@@ -219,14 +220,18 @@ class ActionLibrary:
         found = []
         for directory in WORDLIST_SEARCH_DIRS:
             if os.path.isdir(directory):
-                for fname in sorted(os.listdir(directory)):
-                    full = os.path.join(directory, fname)
-                    if os.path.isfile(full):
-                        found.append(full)
+                for root, dirs, files in os.walk(directory):
+                    # Skip hidden directories
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    for fname in files:
+                        if fname.endswith('.txt') or fname.endswith('.lst') or fname.endswith('.dict'):
+                            full = os.path.join(root, fname)
+                            # Show relative path from base directory
+                            rel = os.path.relpath(full, directory) if not full.startswith('/') else full
+                            found.append(rel)
         if not found:
-            return ("No wordlist files found under ./wordlists or ./data/wordlists. "
-                    "Place text files there (one entry per line) to make them available.")
-        return "Available wordlists:\n- " + "\n- ".join(found)
+            return ("No wordlist files found. Place text files under ./wordlists or ~/wordlists.")
+        return "Available wordlists (relative paths):\n- " + "\n- ".join(sorted(found))
 
     def _read_wordlist(self, wordlist_name: str, limit: int = 200,
                         offset: int = 0) -> str:

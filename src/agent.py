@@ -228,6 +228,22 @@ Available actions:
 Respond with ONLY a JSON array of steps, each shaped as:
 {{"action_name": "...", "parameters": {{...}}, "critical": false}}
 """
+        seclists_guide = """
+KNOWLEDGE ABOUT SECLISTS (wordlist structure):
+- Fuzzing/          → payloads for fuzzing (SQLi, XSS, SSTI, etc.)
+  - SQLi/           → SQL injection payloads (Generic-SQLi.txt, MySQL-SQLi.txt, etc.)
+  - XSS/            → Cross-site scripting payloads
+  - SSTI/           → Server-side template injection payloads
+  - Directory/      → directory brute-force (common.txt, etc.)
+- Passwords/        → password wordlists (rockyou.txt, weakpass_4.txt, etc.)
+- Usernames/        → username lists (common.txt, etc.)
+- Discovery/        → discovery lists (web-content, etc.)
+- Web-Shells/       → webshell payloads
+When choosing a wordlist, pick the appropriate category based on the test type.
+For SQL injection tests, use Fuzzing/SQLi/ files.
+For credential brute-force, use Passwords/ files.
+"""
+        prompt += seclists_guide
         try:
             steps = self._call_llm_json(prompt, "recon plan", expect_array=True)
         except AgentPlanningError as e:
