@@ -7,10 +7,7 @@ document (Commander, Reconnaissance, Planning, Exploitation, Adaptation,
 Reporting). All phases run on the same local model (Ollama Mistral --
 unchanged from before); "multi-agent" here means multiple distinct
 prompts/responsibilities orchestrated in sequence by this class, not
-multiple separate model instances. See TECH_STACK_AND_ARCHITECTURE.md
-for an honest accounting of which parts of the original design document
-this maps to versus which parts (e.g. Neo4j, Temporal, Kubernetes, a Go
-implant, a React UI) are infrastructure this codebase does not stand up.
+multiple separate model instances.
 
 Every decision about *what* to test, *which* payload to send, and
 *whether* a response indicates a vulnerability is made by the LLM. This
@@ -67,6 +64,13 @@ class RedTeamAgent:
         self.start_time = time.time()
 
     # ------------------------------------------------------------------
+    # Extract target URL from goal
+    # ------------------------------------------------------------------
+    def _extract_target(self, goal: str) -> Optional[str]:
+        match = re.search(r'(https?://[^\s"\']+)', goal)
+        return match.group(1).strip().strip('"').strip("'") if match else None
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
     def run(self, goal: str) -> str:
@@ -112,16 +116,25 @@ class RedTeamAgent:
     # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
-    def _extract_target(self, goal: str) -> Optional[str]:
-        match = re.search(r'(https?://[^\s"\']+)', goal)
-        return match.group(1).strip().strip('"').strip("'") if match else None
-
     def _call_llm_json(self, prompt: str, what: str, expect_array: bool = True) -> Any:
         pattern = r'\[\s*\{.*\}\s*\]' if expect_array else r'\{.*\}'
         last_error = ""
         for attempt in range(1, MAX_LLM_RETRIES + 1):
             response = ollama.chat(model=self.model, messages=[{"role": "user", "content": prompt}])
             content = response["message"]["content"].strip()
+            # Remove markdown fences
+            content = re.sub(r'```(?:json)?\s*', '', content)
+            content = re.sub(r'```\s*$', '', content)
+            # Try to parse the whole content first
+            try:
+                parsed = json.loads(content)
+                if expect_array and isinstance(parsed, list):
+                    return parsed
+                elif not expect_array and isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            # Fallback to regex extraction
             json_match = re.search(pattern, content, re.DOTALL)
             if json_match:
                 try:
@@ -131,7 +144,7 @@ class RedTeamAgent:
             else:
                 last_error = "no JSON found in model output"
             logger.warning(f"{what} attempt {attempt}/{MAX_LLM_RETRIES} failed: {last_error}")
-            prompt += "\n\nRespond with ONLY valid JSON, no prose, no markdown fences."
+            prompt += "\n\nYour response must be ONLY valid JSON, no extra text, no markdown."
         raise AgentPlanningError(f"Failed to produce valid {what} after {MAX_LLM_RETRIES} attempts.")
 
     # ------------------------------------------------------------------
@@ -314,6 +327,20 @@ a placeholder domain.
 Respond with ONLY a JSON array of steps:
 {{"action_name": "...", "parameters": {{...}}, "critical": false}}
 """
+
+        # ---- Injection hint: force SQLi payloads if injection is in scope ----
+        if "A05:2025" in directive.get("focus_owasp_categories", []):
+            injection_hint = """
+IMPORTANT: For injection tests, you MUST send test payloads in parameters (e.g., ' OR '1'='1,
+' UNION SELECT NULL--, etc.) and inspect the response for errors or anomalies.
+Record a finding only if the response indicates a vulnerability (e.g., SQL error,
+unexpected behavior). Do NOT record findings without sending a payload first.
+"""
+        else:
+            injection_hint = ""
+
+        prompt += injection_hint
+
         return self._call_llm_json(prompt, "exploitation plan", expect_array=True)
 
     # ------------------------------------------------------------------
@@ -431,12 +458,8 @@ Write only the paragraph text, nothing else.
             return ("An executive summary could not be generated automatically. "
                     "See the detailed findings and action log below.")
 
-    def _generate_report(self, goal: str, target: str, directive: Dict,
-                          recon_findings: str, results: List[Dict]) -> str:
-        return self._reporting_phase(goal, target, directive, recon_findings, results)
-
     def _reporting_phase(self, goal: str, target: str, directive: Dict,
-                          recon_findings: str, results: List[Dict]) -> str:
+                         recon_findings: str, results: List[Dict]) -> str:
         duration = time.time() - self.start_time
         mins, secs = divmod(int(duration), 60)
         duration_str = f"{mins}m {secs}s"

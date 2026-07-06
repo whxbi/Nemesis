@@ -10,7 +10,11 @@ whatever goal the operator provides.
 """
 import logging
 import os
-
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 from src.ttp_loader import TTPLoader
 from src.graph_builder import build_ttp_graph
 from src.rag import RAGRetriever

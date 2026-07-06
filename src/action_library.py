@@ -37,9 +37,12 @@ DEFAULT_REQUEST_DELAY = 0.3
 DEFAULT_MAX_REQUESTS = 500
 MAX_BODY_PREVIEW_CHARS = 3000
 
-WORDLIST_SEARCH_DIRS = ["wordlists", os.path.join("data", "wordlists")]
-
-
+WORDLIST_SEARCH_DIRS = [
+    "wordlists",
+    os.path.join("data", "wordlists"),
+    os.path.expanduser("~/wordlists"),
+    os.path.expanduser("~/.wordlists"),
+]
 class RequestBudgetExceeded(Exception):
     """Raised when a run has hit its total request budget."""
     pass
