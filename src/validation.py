@@ -1,26 +1,73 @@
 """
-src/validation.py — patched.
+src/validation.py
 
-The original ActionStep accepted any string as action_name — an invalid
-or hallucinated action name would pass validation here and only fail
-later, inside ActionLibrary.execute()'s ValueError. Not wrong exactly,
-just a validation layer that wasn't actually validating the one field
-most likely to be wrong. Now it checks against the real registry.
+Validates that:
+1. Every planned step uses a real, registered action.
+2. Required parameters for that action are present.
+3. Any URL-shaped parameter actually looks like a URL.
+
+The action registry mirrors exactly what src/action_library.py exposes --
+generic HTTP verbs plus two neutral utilities and a finding recorder.
+There is no action here for "test_sql_injection" or similar, because no
+such scripted action exists anymore: the LLM composes its own tests out
+of http_get/http_post/etc.
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any
+import re
 
-# Kept as a plain list (not an import of ActionLibrary) to avoid a circular
-# import between validation.py and action_library.py. Update this if you
-# add/rename actions in ActionLibrary.actions.
-
-KNOWN_ACTIONS = {
-    "send_http_request", "crawl_and_scan", "test_sql_injection", "test_xss",
-    "test_ssti", "test_idor", "test_privilege_escalation", "directory_bruteforce",
-    "check_headers", "test_credential_bruteforce", "analyze_source_for_secrets",
-    "log_vulnerability", "check_robots_txt",
-    "full_scan", "scan_sqli_all_paths", "scan_xss_all_paths", "scan_ssti_all_paths",
+ACTION_REGISTRY = {
+    "http_get": {
+        "required": ["url"],
+        "optional": ["headers", "params", "cookies"],
+    },
+    "http_post": {
+        "required": ["url"],
+        "optional": ["headers", "params", "data", "json_body", "cookies"],
+    },
+    "http_put": {
+        "required": ["url"],
+        "optional": ["headers", "params", "data", "json_body", "cookies"],
+    },
+    "http_patch": {
+        "required": ["url"],
+        "optional": ["headers", "params", "data", "json_body", "cookies"],
+    },
+    "http_delete": {
+        "required": ["url"],
+        "optional": ["headers", "params", "cookies"],
+    },
+    "http_request": {
+        "required": ["url", "method"],
+        "optional": ["headers", "params", "data", "json_body", "cookies"],
+    },
+    "read_wordlist": {
+        "required": ["wordlist_name"],
+        "optional": ["limit", "offset"],
+    },
+    "list_wordlists": {
+        "required": [],
+        "optional": [],
+    },
+    "record_finding": {
+        "required": ["url", "owasp_category", "technique_id", "description", "evidence"],
+        "optional": ["severity"],
+    },
 }
+
+KNOWN_ACTIONS = set(ACTION_REGISTRY.keys())
+
+
+def _is_valid_url(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    if not url.startswith(("http://", "https://")):
+        return False
+    if len(url) <= 8:
+        return False
+    return bool(re.match(r'^https?://[^\s"\'<>]+$', url))
+
+
 class ActionStep(BaseModel):
     action_name: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
@@ -34,3 +81,37 @@ class ActionStep(BaseModel):
                 f"'{v}' is not a registered action. Known actions: {sorted(KNOWN_ACTIONS)}"
             )
         return v
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters(cls, params: Dict[str, Any], info) -> Dict[str, Any]:
+        action_name = info.data.get("action_name")
+        if not action_name or action_name not in ACTION_REGISTRY:
+            return params
+
+        registry = ACTION_REGISTRY[action_name]
+        required_params = registry.get("required", [])
+        optional_params = registry.get("optional", [])
+        allowed = set(required_params) | set(optional_params)
+
+        missing = [p for p in required_params if p not in params]
+        if missing:
+            raise ValueError(
+                f"Action '{action_name}' missing required parameters: {missing}. "
+                f"Required: {required_params}. Got: {list(params.keys())}"
+            )
+
+        unknown = [p for p in params.keys() if p not in allowed]
+        if unknown:
+            raise ValueError(
+                f"Action '{action_name}' has unknown parameters: {unknown}. "
+                f"Allowed: {sorted(allowed)}"
+            )
+
+        if "url" in params and isinstance(params["url"], str):
+            if not _is_valid_url(params["url"]):
+                raise ValueError(
+                    f"Parameter 'url' is not a valid http(s) URL: '{params['url']}'"
+                )
+
+        return params

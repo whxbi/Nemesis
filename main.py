@@ -1,15 +1,12 @@
 """
-main.py — patched.
+main.py
 
-Fix from the review: the old default goal, used whenever you hit Enter
-with no input, was "Perform a credential dumping attack on a Windows
-domain controller." Two problems with that: (1) nothing in
-action_library.py does credential dumping or touches Windows/AD at all
-— it's a web-app scanner (SQLi/XSS/SSTI/IDOR/directory brute-force) — so
-the phrase didn't match any real capability here, it looks like leftover
-boilerplate; (2) a silent default that reads as a live attack instruction
-is exactly the kind of thing worth removing on principle, matched
-capability or not. Now a goal is required — no attack-flavored fallback.
+Entry point for the Nemesis autonomous assessment agent. Loads MITRE
+ATT&CK techniques and Atomic Red Team test data, builds the combined
+knowledge base (MITRE + atomic tests + OWASP Top 10:2025), and hands
+control to RedTeamAgent, which runs the full Commander -> Recon ->
+Planning -> Exploitation -> Adaptation -> Reporting pipeline for
+whatever goal the operator provides.
 """
 import logging
 import os
@@ -28,7 +25,7 @@ logging.basicConfig(
 
 def main():
     print("=" * 70)
-    print("Nemesis — autonomous red-team agent (prototype)")
+    print("Nemesis - autonomous red-team assessment platform (prototype)")
     print("Only test systems you own or are explicitly authorized to test.")
     print("=" * 70)
 
@@ -37,7 +34,7 @@ def main():
     atomic_tests = loader.load_atomic_tests()
     graph = build_ttp_graph(techniques)
 
-    retriever = RAGRetriever(techniques)
+    retriever = RAGRetriever(techniques, atomic_tests)
     retriever.build_index()
 
     actions = ActionLibrary()
@@ -50,12 +47,13 @@ def main():
     )
 
     goal = input(
-        "\nEnter your red team goal (e.g. 'Find vulnerabilities on "
-        "https://vulnbank.org'): "
+        "\nEnter your assessment goal, including the full target URL "
+        "(e.g. 'Assess https://your-authorized-target.example for "
+        "injection vulnerabilities'): "
     ).strip()
 
     if not goal:
-        print("No goal entered — nothing to do. Run again with a goal.")
+        print("No goal entered. Nothing to do. Run again with a goal.")
         return
 
     result = agent.run(goal)

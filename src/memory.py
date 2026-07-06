@@ -57,19 +57,17 @@ class EpisodicMemory:
     # ---------------------------------------------------------------
     # Writing memory (call this once, at the end of a run)
     # ---------------------------------------------------------------
-
     def record_run(self, goal: str, target: Optional[str], results: List[Dict]) -> str:
         """
         Summarizes a completed run's action results into a short episode
         and stores it. Returns the episode's id.
 
-        `results` is the list your agent.py already builds in _execute():
-        [{"step": {...}, "status": "success"/"failed"/"blocked"/"invalid",
+        `results` is the list agent.py builds in _execute():
+        [{"step": {...}, "status": "success"/"failed"/"refused"/"invalid",
           "result": "...", "error": "..."}]
         """
         episode_id = str(uuid.uuid4())[:8]
         summary = self._summarize(goal, target, results)
-
         record = {
             "id": episode_id,
             "ts": time.time(),
@@ -78,12 +76,9 @@ class EpisodicMemory:
             "summary": summary,
             "action_count": len(results),
         }
-
-        # 1. Append to the durable JSONL log (source of truth)
         with open(EPISODES_FILE, "a") as f:
             f.write(json.dumps(record) + "\n")
 
-        # 2. Index in Chroma for semantic retrieval later
         self.collection.upsert(
             ids=[episode_id],
             documents=[f"Goal: {goal}\n{summary}"],
@@ -98,18 +93,17 @@ class EpisodicMemory:
         what actually happened. Reading the structured status fields
         directly is slower to write but always accurate.
         """
-        succeeded, failed, blocked, invalid = [], [], [], []
+        succeeded, failed, refused, invalid = [], [], [], []
         for r in results:
             action = r.get("step", {}).get("action_name", "?")
             status = r.get("status")
             if status == "success":
-                # Trim long result text so the summary stays compact
                 outcome = str(r.get("result", ""))[:160]
                 succeeded.append(f"{action} -> {outcome}")
             elif status == "failed":
                 failed.append(f"{action} ({r.get('error', 'unknown error')})")
-            elif status == "blocked":
-                blocked.append(action)
+            elif status == "refused":
+                refused.append(action)
             elif status == "invalid":
                 invalid.append(action)
 
@@ -118,8 +112,8 @@ class EpisodicMemory:
             lines.append("Worked: " + "; ".join(succeeded))
         if failed:
             lines.append("Failed: " + "; ".join(failed))
-        if blocked:
-            lines.append("Blocked by operator: " + ", ".join(blocked))
+        if refused:
+            lines.append("Refused (out of scope): " + ", ".join(refused))
         if invalid:
             lines.append("Rejected as invalid: " + ", ".join(invalid))
         return "\n".join(lines)
@@ -127,7 +121,6 @@ class EpisodicMemory:
     # ---------------------------------------------------------------
     # Reading memory (call this before planning a new run)
     # ---------------------------------------------------------------
-
     def retrieve_relevant(self, goal: str, top_k: int = 3) -> List[str]:
         """
         Returns up to top_k past episode summaries relevant to a new goal,
@@ -151,7 +144,8 @@ class EpisodicMemory:
         block = "\n\n".join(f"Past run:\n{ep}" for ep in episodes)
         return (
             "\n\nLESSONS FROM PREVIOUS RUNS (use these to avoid repeating "
-            "failed approaches and to prioritize what has worked before):\n"
+            "failed approaches and to prioritize what has worked before -- "
+            "but never let this broaden the scope of the CURRENT directive):\n"
             f"{block}\n"
         )
 

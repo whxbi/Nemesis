@@ -1,3 +1,18 @@
+"""
+src/ttp_loader.py
+
+Loads MITRE ATT&CK Enterprise techniques and Atomic Red Team test
+procedures used to build the RAG knowledge base.
+
+Fix from the previous version: load_atomic_tests() used to do
+`tests.update(data)` for every YAML file, where `data` is the file's
+top-level dict (keys: attack_technique, display_name, atomic_tests).
+Because those key names are the same across every file, each new file
+silently clobbered the previous one -- only the last-loaded technique's
+atomic tests ever survived. Atomic tests are now keyed by their
+technique ID, so nothing gets overwritten and src/rag.py can actually
+index all of them.
+"""
 import json
 import os
 import yaml
@@ -8,18 +23,19 @@ DATA_DIR = "data"
 ATOMIC_DIR = os.path.join(DATA_DIR, "atomic_tests")
 TECHNIQUES_FILE = os.path.join(DATA_DIR, "techniques.json")
 
+
 class TTPLoader:
     def __init__(self):
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(ATOMIC_DIR, exist_ok=True)
-    
+
     def load_techniques(self) -> List[Dict]:
         if os.path.exists(TECHNIQUES_FILE):
             with open(TECHNIQUES_FILE, 'r') as f:
                 return json.load(f)
         else:
             return self._fetch_mitre_techniques()
-    
+
     def _fetch_mitre_techniques(self) -> List[Dict]:
         print("Fetching MITRE ATT&CK Enterprise techniques...")
         url = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
@@ -42,22 +58,35 @@ class TTPLoader:
             json.dump(techniques, f, indent=2)
         print(f"Fetched {len(techniques)} techniques.")
         return techniques
-    
-    def load_atomic_tests(self) -> Dict[str, List[Dict]]:
+
+    def load_atomic_tests(self) -> Dict[str, Dict]:
+        """
+        Returns a dict keyed by technique ID, e.g.:
+            {"T1059.001": {"attack_technique": "T1059.001",
+                            "display_name": "...",
+                            "atomic_tests": [...]}}
+        """
         if not os.listdir(ATOMIC_DIR):
             self._fetch_atomic_tests()
-        tests = {}
+
+        tests: Dict[str, Dict] = {}
         for yaml_file in os.listdir(ATOMIC_DIR):
-            if yaml_file.endswith('.yaml'):
-                with open(os.path.join(ATOMIC_DIR, yaml_file), 'r') as f:
-                    try:
-                        data = yaml.safe_load(f)
-                        if data:
-                            tests.update(data)
-                    except Exception as e:
-                        print(f"Error loading {yaml_file}: {e}")
+            if not yaml_file.endswith('.yaml'):
+                continue
+            with open(os.path.join(ATOMIC_DIR, yaml_file), 'r') as f:
+                try:
+                    data = yaml.safe_load(f)
+                except Exception as e:
+                    print(f"Error loading {yaml_file}: {e}")
+                    continue
+            if not data:
+                continue
+            # Key by the technique ID embedded in the file, falling back
+            # to the filename (without extension) if the field is absent.
+            tech_id = data.get('attack_technique') or os.path.splitext(yaml_file)[0]
+            tests[tech_id] = data
         return tests
-    
+
     def _fetch_atomic_tests(self):
         print("Downloading Atomic Red Team tests (subset)...")
         sample_tests = {
