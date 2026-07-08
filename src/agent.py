@@ -58,7 +58,7 @@ class RedTeamAgent:
         self.graph = graph
         self.retriever = retriever
         self.actions = actions or ActionLibrary()
-        self.model = os.getenv("OLLAMA_MODEL", "mistral")
+        self.model = "hidra-30b"
         self.execution_history: List[Dict] = []
         self.memory = EpisodicMemory()
         self.start_time = time.time()

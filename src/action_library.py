@@ -1,26 +1,10 @@
 """
 src/action_library.py
 
-This module exposes only generic, protocol-level actions: HTTP requests
-(GET/POST/PUT/PATCH/DELETE, plus a fully generic http_request), full
-request/response introspection, and a couple of neutral file/utility
-helpers (reading a wordlist, listing available wordlists, recording a
-finding). There is no scripted vulnerability testing logic here --
-no payload lists, no automatic crawler, no "test for SQLi/XSS/SSTI"
-functions. All reasoning about what to send, where to send it, and how
-to interpret the response belongs to the LLM in src/agent.py.
-
-The only non-negotiable safety control implemented at this layer is:
-  1. Scope authorization (src/scope.py) -- every request is checked
-     against the operator-confirmed target list before it is sent.
-  2. A request budget -- an upper bound on total requests per run, to
-     keep an autonomous session bounded.
-
-Everything else -- what to test, which OWASP Top 10:2025 category it
-maps to, which MITRE ATT&CK technique it resembles, what payload to
-send -- is decided by the LLM at runtime.
+Exposes only generic, protocol-level actions: HTTP GET and POST,
+full request/response introspection, and neutral wordlist/file helpers.
+No scripted vulnerability tests – all reasoning belongs to the LLM.
 """
-
 import logging
 import os
 import time
@@ -37,28 +21,25 @@ DEFAULT_REQUEST_DELAY = 0.3
 DEFAULT_MAX_REQUESTS = 500
 MAX_BODY_PREVIEW_CHARS = 3000
 
+# Expanded search directories for wordlists (including your ~/wordlists)
 WORDLIST_SEARCH_DIRS = [
     "wordlists",
     os.path.join("data", "wordlists"),
-    os.path.expanduser("~/wordlists"),
-    os.path.expanduser("~/.wordlists"),
+    os.path.expanduser("~/wordlists/seclists"),           # your main directory
 ]
 
+
 class RequestBudgetExceeded(Exception):
-    """Raised when a run has hit its total request budget."""
     pass
 
 
 class ActionLibrary:
     def __init__(self, request_delay: float = DEFAULT_REQUEST_DELAY,
                  max_requests: int = DEFAULT_MAX_REQUESTS):
+        # Only GET and POST actions are provided
         self.actions = {
             "http_get": self._http_get,
             "http_post": self._http_post,
-            "http_put": self._http_put,
-            "http_patch": self._http_patch,
-            "http_delete": self._http_delete,
-            "http_request": self._http_request,
             "read_wordlist": self._read_wordlist,
             "list_wordlists": self._list_wordlists,
             "record_finding": self._record_finding,
@@ -79,9 +60,7 @@ class ActionLibrary:
         return self.actions[action_name](**kwargs)
 
     # ------------------------------------------------------------------
-    # Centralized HTTP transport. This is the single choke point where
-    # scope authorization and the request budget are enforced, no matter
-    # which HTTP verb the LLM asked for.
+    # Centralized HTTP transport (scope + budget enforced)
     # ------------------------------------------------------------------
     def _request(self, method: str, url: str, **kwargs) -> Any:
         if not scope.confirm_authorized(url):
@@ -105,13 +84,11 @@ class ActionLibrary:
             return None
 
     # ------------------------------------------------------------------
-    # Response formatting -- always returns full request/response detail
-    # so the LLM has everything it needs to make its own determination
-    # about whether the target is vulnerable.
+    # Response formatting – full request/response detail for LLM analysis
     # ------------------------------------------------------------------
     def _format_exchange(self, method: str, url: str,
-                          req_headers: Optional[Dict], req_params: Optional[Dict],
-                          req_body: Any, resp) -> str:
+                         req_headers: Optional[Dict], req_params: Optional[Dict],
+                         req_body: Any, resp) -> str:
         if resp is None:
             return (
                 f"METHOD: {method}\nURL: {url}\n"
@@ -148,8 +125,8 @@ class ActionLibrary:
         return "\n".join(lines)
 
     def _run_http(self, method: str, url: str, headers: Optional[Dict] = None,
-                   params: Optional[Dict] = None, data: Optional[Dict] = None,
-                   json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
+                  params: Optional[Dict] = None, data: Optional[Dict] = None,
+                  json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
         try:
             resp = self._request(
                 method, url, headers=headers, params=params,
@@ -164,48 +141,20 @@ class ActionLibrary:
         return self._format_exchange(method, url, headers, params, body_sent, resp)
 
     # ------------------------------------------------------------------
-    # HTTP verb actions -- thin, uniform wrappers over _run_http.
-    # The LLM supplies whatever headers/params/body it decides to send;
-    # no payload is generated by this module.
+    # HTTP GET and POST actions (only these are exposed)
     # ------------------------------------------------------------------
     def _http_get(self, url: str, headers: Optional[Dict] = None,
-                   params: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
+                  params: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
         return self._run_http("GET", url, headers=headers, params=params, cookies=cookies)
 
     def _http_post(self, url: str, headers: Optional[Dict] = None,
-                    params: Optional[Dict] = None, data: Optional[Dict] = None,
-                    json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
-        return self._run_http("POST", url, headers=headers, params=params,
-                               data=data, json_body=json_body, cookies=cookies)
-
-    def _http_put(self, url: str, headers: Optional[Dict] = None,
                    params: Optional[Dict] = None, data: Optional[Dict] = None,
                    json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
-        return self._run_http("PUT", url, headers=headers, params=params,
-                               data=data, json_body=json_body, cookies=cookies)
-
-    def _http_patch(self, url: str, headers: Optional[Dict] = None,
-                     params: Optional[Dict] = None, data: Optional[Dict] = None,
-                     json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
-        return self._run_http("PATCH", url, headers=headers, params=params,
-                               data=data, json_body=json_body, cookies=cookies)
-
-    def _http_delete(self, url: str, headers: Optional[Dict] = None,
-                      params: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
-        return self._run_http("DELETE", url, headers=headers, params=params, cookies=cookies)
-
-    def _http_request(self, url: str, method: str = "GET", headers: Optional[Dict] = None,
-                       params: Optional[Dict] = None, data: Optional[Dict] = None,
-                       json_body: Optional[Dict] = None, cookies: Optional[Dict] = None) -> str:
-        """Fully generic request for any HTTP method (HEAD, OPTIONS, TRACE, etc.)."""
-        return self._run_http(method.upper(), url, headers=headers, params=params,
-                               data=data, json_body=json_body, cookies=cookies)
+        return self._run_http("POST", url, headers=headers, params=params,
+                              data=data, json_body=json_body, cookies=cookies)
 
     # ------------------------------------------------------------------
-    # Neutral utilities -- these do not send network traffic and do not
-    # embody any attack technique. They exist so the LLM can compose its
-    # own enumeration or credential-testing strategy using the HTTP
-    # actions above, rather than the tool doing it automatically.
+    # Wordlist utilities – read‑only, no network traffic
     # ------------------------------------------------------------------
     def _resolve_wordlist_path(self, wordlist_name: str) -> Optional[str]:
         if os.path.exists(wordlist_name):
@@ -217,29 +166,31 @@ class ActionLibrary:
         return None
 
     def _list_wordlists(self) -> str:
+        """
+        List all wordlist files found in the search directories.
+        Shows relative paths so the LLM can choose appropriate ones.
+        """
         found = []
         for directory in WORDLIST_SEARCH_DIRS:
             if os.path.isdir(directory):
                 for root, dirs, files in os.walk(directory):
-                    # Skip hidden directories
                     dirs[:] = [d for d in dirs if not d.startswith('.')]
                     for fname in files:
-                        if fname.endswith('.txt') or fname.endswith('.lst') or fname.endswith('.dict'):
+                        if fname.endswith(('.txt', '.lst', '.dict')):
                             full = os.path.join(root, fname)
-                            # Show relative path from base directory
-                            rel = os.path.relpath(full, directory) if not full.startswith('/') else full
+                            rel = os.path.relpath(full, directory)
                             found.append(rel)
         if not found:
-            return ("No wordlist files found. Place text files under ./wordlists or ~/wordlists.")
+            return ("No wordlist files found. Place text files under one of:\n"
+                    + "\n".join(WORDLIST_SEARCH_DIRS))
         return "Available wordlists (relative paths):\n- " + "\n- ".join(sorted(found))
 
     def _read_wordlist(self, wordlist_name: str, limit: int = 200,
-                        offset: int = 0) -> str:
+                       offset: int = 0) -> str:
         """
         Read up to `limit` lines from a wordlist file, starting at `offset`.
-        The LLM uses this to obtain candidate values (paths, usernames,
-        passwords) and then issues its own http_get/http_post calls to
-        test them -- this function does not send any network traffic.
+        The LLM uses this to obtain candidate values and then issues its own
+        http_* calls to test them.
         """
         path = self._resolve_wordlist_path(wordlist_name)
         if not path:
@@ -258,18 +209,11 @@ class ActionLibrary:
                 f"(offset {offset}, {len(all_lines)} total lines):\n" +
                 "\n".join(chunk))
 
+    # ------------------------------------------------------------------
+    # Finding recorder – LLM calls this explicitly after analysis
+    # ------------------------------------------------------------------
     def _record_finding(self, url: str, owasp_category: str, technique_id: str,
-                         description: str, evidence: str, severity: str = "Medium") -> str:
-        """
-        The LLM calls this explicitly once it has determined, from the
-        evidence in an http_* response, that a target is vulnerable. This
-        is a structured logging action, not a test -- the LLM has already
-        done the actual analysis by the time it calls this.
-
-        owasp_category: one of the OWASP Top 10:2025 IDs, e.g. "A05:2025"
-        technique_id: a MITRE ATT&CK technique ID if applicable, e.g. "T1190"
-        severity: "Critical" | "High" | "Medium" | "Low" | "Informational"
-        """
+                        description: str, evidence: str, severity: str = "Medium") -> str:
         finding = {
             "url": url,
             "owasp_category": owasp_category,

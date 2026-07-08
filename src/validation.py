@@ -1,17 +1,5 @@
-"""
-src/validation.py
+# src/validation.py
 
-Validates that:
-1. Every planned step uses a real, registered action.
-2. Required parameters for that action are present.
-3. Any URL-shaped parameter actually looks like a URL.
-
-The action registry mirrors exactly what src/action_library.py exposes --
-generic HTTP verbs plus two neutral utilities and a finding recorder.
-There is no action here for "test_sql_injection" or similar, because no
-such scripted action exists anymore: the LLM composes its own tests out
-of http_get/http_post/etc.
-"""
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any
 import re
@@ -23,22 +11,6 @@ ACTION_REGISTRY = {
     },
     "http_post": {
         "required": ["url"],
-        "optional": ["headers", "params", "data", "json_body", "cookies"],
-    },
-    "http_put": {
-        "required": ["url"],
-        "optional": ["headers", "params", "data", "json_body", "cookies"],
-    },
-    "http_patch": {
-        "required": ["url"],
-        "optional": ["headers", "params", "data", "json_body", "cookies"],
-    },
-    "http_delete": {
-        "required": ["url"],
-        "optional": ["headers", "params", "cookies"],
-    },
-    "http_request": {
-        "required": ["url", "method"],
         "optional": ["headers", "params", "data", "json_body", "cookies"],
     },
     "read_wordlist": {
@@ -57,7 +29,6 @@ ACTION_REGISTRY = {
 
 KNOWN_ACTIONS = set(ACTION_REGISTRY.keys())
 
-
 def _is_valid_url(url: str) -> bool:
     if not isinstance(url, str):
         return False
@@ -66,7 +37,6 @@ def _is_valid_url(url: str) -> bool:
     if len(url) <= 8:
         return False
     return bool(re.match(r'^https?://[^\s"\'<>]+$', url))
-
 
 class ActionStep(BaseModel):
     action_name: str
@@ -81,6 +51,7 @@ class ActionStep(BaseModel):
                 f"'{v}' is not a registered action. Known actions: {sorted(KNOWN_ACTIONS)}"
             )
         return v
+
 
     @field_validator("parameters")
     @classmethod
